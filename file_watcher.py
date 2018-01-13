@@ -1,6 +1,9 @@
 import os
 import magic
+import shutil
 import logging
+import subprocess
+#from fallocate import fallocate
 
 import inotify.adapters
 
@@ -22,6 +25,7 @@ def main():
     i = inotify.adapters.Inotify()
 
     main_path = b'/srv/zpui-bootlogs/ftp/upload/'
+    sandbox_path = b'/srv/zpui-bootlogs/ftp/sandbox/'
 
     i.add_watch(main_path)
 
@@ -35,7 +39,24 @@ def main():
                     file_path = os.path.join(main_path, filename)
                     with open(file_path) as f:
                         type = magic.from_buffer(f.read(1024))
+                    #TODO: check file size
                     print(type)
+                    sandbox_file_path = os.path.join(sandbox_path, filename)
+                    os.rename(file_path, sandbox_file_path)
+                    print("Moved file to the sandbox folder")
+                    img_file_path = sandbox_file_path+".img"
+                    #with open(img_file_path, 'w') as f: #doesn't work, no idea why yet
+                    #    fallocate(f, 0, 10*1024*1024)
+                    subprocess.check_call(["fallocate", img_file_path, "-l", "10M"])
+                    print("Created empty loopback image")
+                    subprocess.check_call(["mkfs.ext4", "-F", img_file_path])
+                    print("Created filesystem on that image")
+                    mount_folder_path = sandbox_file_path+".mnt"
+                    os.mkdir(mount_folder_path)
+                    subprocess.check_call(["fuse2fs", img_file_path, mount_folder_path, "-o", "rw"])
+                    print("Mounted the loopback image")
+                    shutil.move(sandbox_file_path, mount_folder_path)
+                    print("Moved the file into the mounted image")
                 else:
                     pass #_LOGGER.info("WD=(%d) MASK=(%d) COOKIE=(%d) LEN=(%d) MASK->NAMES=%s "
                     #         "WATCH-PATH=[%s] FILENAME=[%s]",
