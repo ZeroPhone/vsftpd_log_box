@@ -1,3 +1,4 @@
+#Code based on http://masnun.com/2010/01/01/sending-mail-via-postfix-a-perfect-python-example.html
 import smtplib
 from email.MIMEMultipart import MIMEMultipart
 from email.MIMEBase import MIMEBase
