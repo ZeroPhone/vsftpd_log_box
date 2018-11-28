@@ -33,6 +33,7 @@ def sendMail(to, fro, subject, text, files=[],server="127.0.0.1"):
     smtp.sendmail(fro, to, msg.as_string() )
     smtp.close()
 
-# Example:
-sendMail(None,'ZPUI bugreport <bugs@zerophone.org>','ZPUI bugreport received','This is a ZPUI bugreport test message',["mailer.py"])
+if __name__ == "__main__":
+    # Example:
+    sendMail(None,'ZeroPhone bugreport <bugs@zerophone.org>','ZeroPhone bugreport received','This is a ZeroPhone bugreport test message',["mailer.py"])
 
