@@ -1,0 +1,13 @@
+[Unit]
+Description=ZeroPhone log watcher service
+
+[Service]
+User=uploaded
+Group=nogroup
+PIDFile=/run/zp_log_watcher.pid
+ExecStart=/usr/bin/zp_logfile_watcher.py
+WorkingDirectory=/srv/zerophone-logs/ftp/upload/
+Restart=always
+
+[Install]
+WantedBy=vsftpd.service

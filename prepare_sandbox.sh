@@ -9,7 +9,9 @@ fi
 SIZE=5M
 SANDBOX_ROOT=$1
 
-./clear_sandbox.sh $1
+./clear_sandbox.sh $1 || true
+
+cd $1
 
 touch {0..9}.img
 echo Creating files
