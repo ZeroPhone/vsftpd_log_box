@@ -1,6 +1,8 @@
+#!/usr/bin/env python2
 import os
 import magic
 import shutil
+import zipfile
 import logging
 import subprocess
 from time import sleep
@@ -30,22 +32,54 @@ def lprint(str):
     with print_lock:
        print(str)
 
-def process_file(file_path, sandbox_path, id):
-    filename = os.path.basename(file_path)
-    lprint( "{}: processing {}".format(id, filename) )
-    with open(file_path) as f:
-       type = magic.from_buffer(f.read(1024))
-    #TODO: check file size
-    #TODO: check file type
-    lprint( "{}: '{}' file".format(id, type) )
-    sandbox_file_path = os.path.join(sandbox_path, filename)
-    os.rename(file_path, sandbox_file_path)
-    lprint( "{}: Moved file to the base sandbox folder".format(id) )
-    img_dir = os.path.join(sandbox_path, str(id))
-    img_file_path = os.path.join(img_dir, filename)
-    shutil.move(sandbox_file_path, img_file_path)
-    lprint( "{}: Moved the file into the sandbox".format(id) )
+def clean_dir(dir):
+    lprint(dir)
+    for i in os.listdir(dir):
+        if os.path.isdir(i) and not os.path.islink(i):
+            shutil.rmtree(i)
+        elif os.path.exists(i):
+            os.remove(i)
+
+def process_file(file_path, base_sandbox_path, id):
+    file_to_remove = file_path
+    try:
+        filename = os.path.basename(file_path)
+        if not filename.endswith(".zip"):
+            lprint("Random shit received: {}, ignoring!".format(filename))
+            os.remove(file_path)
+            return False
+        lprint( "{}: processing {}".format(id, filename) )
+        with open(file_path) as f:
+            type = magic.from_buffer(f.read(1024))
+        lprint( "{}: '{}' file".format(id, type) )
+        if not type.startswith("Zip archive") or not zipfile.is_zipfile(file_path):
+            lprint("Random .zip-imitating shit received: {}, ignoring!".format(filename))
+            os.remove(file_path)
+            return False
+        #TODO: check file size
+        os.rename(file_path, os.path.join(base_sandbox_path, filename))
+        file_to_remove = os.path.join(base_sandbox_path, filename)
+        lprint( "{}: Moved file to the base sandbox folder".format(id) )
+        sandbox_dir = os.path.join(base_sandbox_path, str(id))
+        lprint("Cleaning sandbox dir: {}".format(sandbox_dir))
+        clean_dir(sandbox_dir)
+        sandbox_base_path = os.path.join(base_sandbox_path, filename)
+        sandboxed_file_path = os.path.join(sandbox_dir,  filename)
+        shutil.move(sandbox_base_path, sandboxed_file_path)
+        file_to_remove = sandboxed_file_path
+        lprint( "{}: Moved the file into the sandbox".format(id) )
+        with zipfile.ZipFile(sandboxed_file_path, 'r') as zf:
+            zf.extractall(sandbox_dir)
+        lprint( "{}: Removing original file: {}".format(id, sandboxed_file_path) )
+        os.remove(sandboxed_file_path)
+    except:
+        import traceback; traceback.print_exc()
+        try:
+            os.remove(file_to_remove)
+        except:
+            import traceback; traceback.print_exc()
     return id
+
 
 class FileProcessorManager(object):
 
@@ -82,6 +116,7 @@ class FileProcessorManager(object):
         success = False
         for id, result in self.results.items():
             try:
+                #The timeout doesn't actually work!
                 result_id = result.get(timeout=1)
             except TimeoutError:
                 pass
@@ -130,8 +165,8 @@ def main(main_path, manager):
         i.remove_watch(main_path)
 
 if __name__ == '__main__':
-    main_path = b'/srv/zpui-bootlogs/ftp/upload/'
-    sandbox_path = b'/srv/zpui-bootlogs/ftp/sandbox/'
+    main_path = b'/srv/zerophone-logs/ftp/upload/'
+    sandbox_path = b'/srv/zerophone-logs/ftp/sandbox/'
 
     _configure_logging()
     manager = FileProcessorManager(sandbox_path)
