@@ -5,19 +5,23 @@ import json
 import magic
 import shutil
 import inspect
+import smtplib
 import logging
 import traceback
 import subprocess
 from time import sleep
-from mailer import sendMail
+import inotify.adapters
+from email import Encoders
 from threading import Thread
 from datetime import datetime
 from Queue import Queue, Empty
 from uuid import uuid4 as gen_uuid
+from email.MIMEBase import MIMEBase
+from email.MIMEText import MIMEText
 from zipfile import ZipFile, is_zipfile
+from email.MIMEMultipart import MIMEMultipart
+from email.Utils import COMMASPACE, formatdate
 from multiprocessing import Process, Pool, TimeoutError
-
-import inotify.adapters
 
 assert sys.version_info >= (2, 7, 4), "zipinfo protections introduced in 2.7.4 are required"
 
@@ -43,6 +47,32 @@ def _configure_logging():
     ch.setFormatter(formatter)
 
     l.addHandler(ch)
+
+def sendMail(to, fro, subject, text, files=[],server="127.0.0.1"):
+    assert type(to)==list
+    assert type(files)==list
+
+
+    msg = MIMEMultipart()
+    msg['From'] = fro
+    msg['To'] = COMMASPACE.join(to)
+    msg['Date'] = formatdate(localtime=True)
+    msg['Subject'] = subject
+
+    msg.attach( MIMEText(text) )
+
+    for file in files:
+        part = MIMEBase('application', "octet-stream")
+        part.set_payload( open(file,"rb").read() )
+        Encoders.encode_base64(part)
+        part.add_header('Content-Disposition', 'attachment; filename="%s"'
+                       % os.path.basename(file))
+        msg.attach(part)
+
+    smtp = smtplib.SMTP()
+    smtp.connect(server)
+    smtp.sendmail(fro, to, msg.as_string() )
+    smtp.close()
 
 def clean_dir(dir):
     logging.info(dir)
