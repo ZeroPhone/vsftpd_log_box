@@ -122,6 +122,7 @@ def process_file(file_path, base_sandbox_path, final_path, id):
             status["error"] = True
             status["result"] = "random_nonzip_shit"
             os.remove(file_path)
+            status["file_to_remove"] = None
             raise ValueError("Got random shit")
         status["state"] = "processing_magic"
         logging.info( "{}: processing {}".format(id, filename) )
@@ -135,6 +136,7 @@ def process_file(file_path, base_sandbox_path, final_path, id):
             status["error"] = True
             status["result"] = "random_fakezip_shit"
             os.remove(file_path)
+            status["file_to_remove"] = None
             raise ValueError("Got random shit pretending to be ZIP")
         #TODO: check file size
         status["state"] = "moving_into_sandbox_base"
