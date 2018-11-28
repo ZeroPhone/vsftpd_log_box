@@ -182,7 +182,7 @@ def process_file(file_path, base_sandbox_path, final_path, id):
     for key in status.keys():
         if status[key] is None:
             status[key] = "None"
-    print(status)
+    logging.info(status)
     try:
         text = json.dumps(status)
     except:
@@ -272,7 +272,7 @@ def main(main_path, manager):
                 (header, type_names, watch_path, filename) = event
                 if "IN_CLOSE_WRITE" in type_names:
                     filename = filename.decode('utf-8')
-                    print("File {} uploaded!".format(filename))
+                    logging.info("File {} uploaded!".format(filename))
                     file_path = os.path.join(main_path, filename)
                     manager.notify_file(file_path)
                 else:
