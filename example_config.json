@@ -1,0 +1,6 @@
+{"mail_destination":["admin@example.org"],
+ "mail_server":false,
+ "main_path":"/srv/upload",
+ "sandbox_path":"/srv/sandbox",
+ "final_path":"/srv/checked"
+}

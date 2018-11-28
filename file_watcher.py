@@ -1,20 +1,38 @@
 #!/usr/bin/env python2
 import os
+import sys
+import json
 import magic
 import shutil
-import zipfile
+import inspect
 import logging
+import traceback
 import subprocess
 from time import sleep
+from mailer import sendMail
 from threading import Thread
+from datetime import datetime
 from Queue import Queue, Empty
-from multiprocessing import Process, Pool, TimeoutError, Lock
+from uuid import uuid4 as gen_uuid
+from zipfile import ZipFile, is_zipfile
+from multiprocessing import Process, Pool, TimeoutError
 
 import inotify.adapters
+
+assert sys.version_info >= (2, 7, 4), "zipinfo protections introduced in 2.7.4 are required"
 
 _DEFAULT_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 
 l = logging.getLogger(__name__)
+
+with open("/etc/zp_bugreport.json", 'r') as f:
+    config = json.loads(f.read())
+
+assert(config.get("mail_destination", None))
+assert(isinstance(config.get("mail_destination", None),list))
+assert(config.get("main_path", None))
+assert(config.get("sandbox_path", None))
+assert(config.get("final_path", None))
 
 def _configure_logging():
     l.setLevel(logging.DEBUG)
@@ -26,58 +44,128 @@ def _configure_logging():
 
     l.addHandler(ch)
 
-print_lock = Lock()
-
-def lprint(str):
-    with print_lock:
-       print(str)
-
 def clean_dir(dir):
-    lprint(dir)
+    logging.info(dir)
     for i in os.listdir(dir):
         if os.path.isdir(i) and not os.path.islink(i):
             shutil.rmtree(i)
         elif os.path.exists(i):
             os.remove(i)
 
-def process_file(file_path, base_sandbox_path, id):
-    file_to_remove = file_path
+def dump_zipinfos_to_str(zipinfos):
+    info_strs = []
+    attrs = ["comment",
+             "create_system",
+             "compress_type",
+             "extra",
+             "create_version",
+             "extract_version",
+             "reserved",
+             "flag_bits",
+             "volume",
+             "internal_attr",
+             "external_attr",
+             "header_offset",
+             "CRC",
+             "compress_size",
+             "file_size"]
+    for info in zipinfos:
+        # v1 of the format
+        str = "v1-{}@{}".format(info.filename, datetime(*info.date_time))
+        attr_strs = ["{}:{}".format(attr, getattr(info,attr, None)) for attr in attrs if getattr(info, attr, None)]
+        attr_strs = filter(None, attr_strs)
+        attr_str = ",".join(attr_strs)
+        str = ','.join([str, attr_str]) if attr_str else str
+        info_strs.append(str)
+    return ';'.join(info_strs)
+
+def process_file(file_path, base_sandbox_path, final_path, id):
+    filename = os.path.basename(file_path)
+    status = {"error":False, "state":"started", "result":None, "file_to_remove":file_path, \
+              "exception":None, "sandbox_id":id, "filename":filename, "file_to_mail":None, \
+              "file_list":[], "file_info_str":None, "json_failed":False}
     try:
         filename = os.path.basename(file_path)
         if not filename.endswith(".zip"):
-            lprint("Random shit received: {}, ignoring!".format(filename))
+            logging.warning("Random shit received: {}, ignoring!".format(filename))
+            status["state"] = "finished"
+            status["error"] = True
+            status["result"] = "random_nonzip_shit"
             os.remove(file_path)
             return False
-        lprint( "{}: processing {}".format(id, filename) )
+        status["state"] = "processing_magic"
+        logging.info( "{}: processing {}".format(id, filename) )
         with open(file_path) as f:
             type = magic.from_buffer(f.read(1024))
-        lprint( "{}: '{}' file".format(id, type) )
-        if not type.startswith("Zip archive") or not zipfile.is_zipfile(file_path):
-            lprint("Random .zip-imitating shit received: {}, ignoring!".format(filename))
+        logging.info( "{}: '{}' file".format(id, type) )
+        status["state"] = "checking_magic"
+        if not type.startswith("Zip archive") or not is_zipfile(file_path):
+            logging.warning("Random .zip-imitating shit received: {}, ignoring!".format(filename))
+            status["state"] = "finished"
+            status["error"] = True
+            status["result"] = "random_fakezip_shit"
             os.remove(file_path)
             return False
         #TODO: check file size
+        status["state"] = "moving_into_sandbox_base"
         os.rename(file_path, os.path.join(base_sandbox_path, filename))
-        file_to_remove = os.path.join(base_sandbox_path, filename)
-        lprint( "{}: Moved file to the base sandbox folder".format(id) )
+        status["file_to_remove"] = os.path.join(base_sandbox_path, filename)
+        logging.info( "{}: Moved file to the base sandbox folder".format(id) )
         sandbox_dir = os.path.join(base_sandbox_path, str(id))
-        lprint("Cleaning sandbox dir: {}".format(sandbox_dir))
+        logging.info("Cleaning sandbox dir: {}".format(sandbox_dir))
+        status["state"] = "cleaning_sandbox_base"
         clean_dir(sandbox_dir)
         sandbox_base_path = os.path.join(base_sandbox_path, filename)
         sandboxed_file_path = os.path.join(sandbox_dir,  filename)
+        status["state"] = "moving_into_sandbox"
         shutil.move(sandbox_base_path, sandboxed_file_path)
-        file_to_remove = sandboxed_file_path
-        lprint( "{}: Moved the file into the sandbox".format(id) )
-        with zipfile.ZipFile(sandboxed_file_path, 'r') as zf:
+        status["file_to_remove"] = sandboxed_file_path
+        logging.info( "{}: Moved the file into the sandbox".format(id) )
+        status["state"] = "extracting_into_sandbox"
+        with ZipFile(sandboxed_file_path, 'r') as zf:
+            status["file_list"] = list(zf.namelist())
+            status["file_info_to_str"] = dump_zipinfos_to_str(zf.infolist())
             zf.extractall(sandbox_dir)
-        lprint( "{}: Removing original file: {}".format(id, sandboxed_file_path) )
+        status["state"] = "removing_original"
+        logging.info( "{}: Removing original file: {}".format(id, sandboxed_file_path) )
         os.remove(sandboxed_file_path)
+        status["file_to_remove"] = None
+        status["state"] = "packing_files"
+        result_path = os.path.join(final_path, "{}-{}".format(filename, gen_uuid()))
+        with ZipFile(result_path, 'w') as zf:
+            for fn in status["file_list"]:
+                zf.write(os.path.join(sandbox_dir, fn))
+        status["file_to_mail"] = result_path
+        status["state"] = "success"
+    except Exception as e:
+        logging.exception("Failure during archive processing!")
+        status["error"] = True
+        status["exception"] = [traceback.format_exc(), {k:str(v) for k,v in inspect.trace()[-1][0].f_locals.items()}]
+        if status["file_to_remove"]:
+            try:
+                os.remove(status["file_to_remove"])
+            except:
+                logging.exception("Failure during file removal!")
+                status["exception"].append(traceback.format_exc())
+    heading = "ZeroPhone bugreport upload fail" if status.get("error", False) else "ZeroPhone bugreport uploaded"
+    files = [status["file_to_mail"]] if status.get("file_to_mail", None) else []
+    for key in status.keys():
+        if status[key] is None:
+            status[key] = "None"
+    print(status)
+    try:
+        text = json.dumps(status)
     except:
-        import traceback; traceback.print_exc()
-        try:
-            os.remove(file_to_remove)
-        except:
-            import traceback; traceback.print_exc()
+        logging.exception("Status-to-JSON conversion failed!")
+        status["json_failed"] = True
+        text = str(status)
+    try:
+        sendMail(config["mail_destination"], 'ZeroPhone bugreport <bugs@zerophone.org>', \
+                 heading, text, files, server=config.get('mail_server', None))
+    except Exception as e:
+        status["exception"].append(traceback.format_exc())
+        status["exception"].append({k:str(v) for k,v in inspect.trace()[-1][0].f_locals.items()})
+        logging.exception(status)
     return id
 
 
@@ -85,8 +173,9 @@ class FileProcessorManager(object):
 
     t = None
 
-    def __init__(self, sandbox_path, limit=10):
+    def __init__(self, sandbox_path, final_path, limit=10):
         self.sandbox_path = sandbox_path
+        self.final_path = final_path
         self.limit = limit
         self.q = Queue()
         self.pool = Pool(processes=self.limit)
@@ -130,7 +219,7 @@ class FileProcessorManager(object):
     def request_process_file(self, path):
         l.info("Requesting to process {}".format(path))
         result_id = self.get_runner_id()
-        result = self.pool.apply_async(process_file, (path, self.sandbox_path, result_id))
+        result = self.pool.apply_async(process_file, (path, self.sandbox_path, self.final_path, result_id))
         l.info("Request sent. ({})".format(path))
         self.results[result_id] = result
 
@@ -165,10 +254,11 @@ def main(main_path, manager):
         i.remove_watch(main_path)
 
 if __name__ == '__main__':
-    main_path = b'/srv/zerophone-logs/ftp/upload/'
-    sandbox_path = b'/srv/zerophone-logs/ftp/sandbox/'
+    main_path = config["main_path"]
+    final_path = config["final_path"]
+    sandbox_path = config["sandbox_path"]
 
     _configure_logging()
-    manager = FileProcessorManager(sandbox_path)
+    manager = FileProcessorManager(sandbox_path, final_path)
     manager.start()
     main(main_path, manager)
