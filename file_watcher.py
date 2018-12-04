@@ -177,7 +177,7 @@ def process_file(file_path, base_sandbox_path, final_path, id):
         status["state"] = "packing_files"
         with ZipFile(result_path, 'w') as zf:
             for fn in status["file_list"]:
-                zf.write(os.path.join(sandbox_dir, fn))
+                zf.write(os.path.join(sandbox_dir, fn), fn)
         status["file_to_mail"] = result_path
         status["state"] = "success"
     except Exception as e:
