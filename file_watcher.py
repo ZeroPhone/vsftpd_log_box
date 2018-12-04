@@ -162,8 +162,19 @@ def process_file(file_path, base_sandbox_path, final_path, id):
         logging.info( "{}: Removing original file: {}".format(id, sandboxed_file_path) )
         os.remove(sandboxed_file_path)
         status["file_to_remove"] = None
+        status["state"] = "generating_dest_filename"
+        # filename, maybe extension
+        fme = filename.rsplit('.', 1)
+        if len(fme) == 1:
+            logging.warning("lol wtf {} has no extension?".format(filename))
+            result_path = os.path.join(final_path, "{}-{}".format(filename, gen_uuid()))
+        elif len(fme) == 2:
+            # Expected result
+            result_path = os.path.join(final_path, "{}-{}.{}".format(fme[0], gen_uuid(), fme[-1]))
+        else:
+            logging.warning("lol wtf len({}.rsplit('.', 1)) != 2 ?".format(filename))
+            result_path = os.path.join(final_path, "{}-{}".format(filename, gen_uuid()))
         status["state"] = "packing_files"
-        result_path = os.path.join(final_path, "{}-{}".format(filename, gen_uuid()))
         with ZipFile(result_path, 'w') as zf:
             for fn in status["file_list"]:
                 zf.write(os.path.join(sandbox_dir, fn))
