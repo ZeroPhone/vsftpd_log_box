@@ -18,9 +18,9 @@ from Queue import Queue, Empty
 from uuid import uuid4 as gen_uuid
 from email.MIMEBase import MIMEBase
 from email.MIMEText import MIMEText
-from zipfile import ZipFile, is_zipfile
 from email.MIMEMultipart import MIMEMultipart
 from email.Utils import COMMASPACE, formatdate
+from zipfile import ZipFile, is_zipfile, ZIP_DEFLATED
 from multiprocessing import Process, Pool, TimeoutError
 
 assert sys.version_info >= (2, 7, 4), "zipinfo protections introduced in 2.7.4 are required"
@@ -175,7 +175,7 @@ def process_file(file_path, base_sandbox_path, final_path, id):
             logging.warning("lol wtf len({}.rsplit('.', 1)) != 2 ?".format(filename))
             result_path = os.path.join(final_path, "{}-{}".format(filename, gen_uuid()))
         status["state"] = "packing_files"
-        with ZipFile(result_path, 'w') as zf:
+        with ZipFile(result_path, 'w', ZIP_DEFLATED) as zf:
             for fn in status["file_list"]:
                 zf.write(os.path.join(sandbox_dir, fn), fn)
         status["file_to_mail"] = result_path
@@ -189,7 +189,7 @@ def process_file(file_path, base_sandbox_path, final_path, id):
                 os.remove(status["file_to_remove"])
             except:
                 logging.exception("Failure during file removal!")
-                status["exception"].append(traceback.format_exc())
+                status["exception"].append([traceback.format_exc()])
     heading = "ZeroPhone bugreport upload fail" if status.get("error", False) else "ZeroPhone bugreport uploaded"
     files = [status["file_to_mail"]] if status.get("file_to_mail", None) else []
     for key in status.keys():
@@ -206,9 +206,12 @@ def process_file(file_path, base_sandbox_path, final_path, id):
         sendMail(config["mail_destination"], 'ZeroPhone bugreport <bugs@zerophone.org>', \
                  heading, text, files, server=config.get('mail_server', None))
     except Exception as e:
-        status["exception"].append(traceback.format_exc())
-        status["exception"].append({k:str(v) for k,v in inspect.trace()[-1][0].f_locals.items()})
-        logging.exception(status)
+        try:
+            status["exception"].append([traceback.format_exc()])
+            status["exception"].append([{k:str(v) for k,v in inspect.trace()[-1][0].f_locals.items()}])
+            logging.exception(status)
+        except:
+            logging.exception("wtf")
     return id
 
 
