@@ -10,4 +10,4 @@ SANDBOX_ROOT=$1
 
 for i in {0..9}; do umount $SANDBOX_ROOT/$i/; done
 rmdir $SANDBOX_ROOT/{0..9}
-rm {0..9}.img
+rm $SANDBOX_ROOT/{0..9}.img
