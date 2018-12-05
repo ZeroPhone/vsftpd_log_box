@@ -6,7 +6,7 @@ if [ "$#" -ne 1 ]; then
     exit 1
 fi
 
-SIZE=5M
+SIZE=200M
 SANDBOX_ROOT=$1
 
 ./clear_sandbox.sh $1 || true
